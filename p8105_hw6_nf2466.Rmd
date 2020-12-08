@@ -1,0 +1,165 @@
+---
+title: "Homework 6"
+author: Nancy Fang (nf2466)
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output: github_document
+---
+```{r setup, include=FALSE}
+library(tidyverse)
+knitr::opts_chunk$set(
+	fig.width = 6, 
+  fig.asp = .6,
+  out.width = "90%"
+)
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+### Problem 1
+Create a city_state variable (e.g. “Baltimore, MD”), and a binary variable indicating whether the homicide is solved. Omit cities Dallas, TX; Phoenix, AZ; and Kansas City, MO – these don’t report victim race. Also omit Tulsa, AL – this is a data entry mistake. For this problem, limit your analysis those for whom victim_race is white or black. Be sure that victim_age is numeric.
+
+
+
+
+Read in the data
+
+```{r}
+homicide_df = 
+  read_csv("data/homicide-data.csv", na = c("", "NA", "Unknown")) %>% 
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    victim_age = as.numeric(victim_age),
+    resolved = case_when(
+      disposition == "Closed without arrest" ~ 0,
+      disposition == "Open/No arrest"        ~ 0,
+      disposition == "Closed by arrest"      ~ 1)
+  ) %>% 
+  filter(
+    victim_race %in% c("White", "Black"),
+    city_state != "Tulsa, AL") %>% 
+  select(city_state, resolved, victim_age, victim_race, victim_sex)
+```
+
+For the city of Baltimore, MD, the adjusted odds ratio for solving homicides comparing non-white victims to white victims keeping all other variables fixed is 1.363 (95% CI 0.975-1.907) which is not statistically significant.
+
+
+```{r}
+baltimore_df =
+  homicide_df %>% 
+  filter(city_state == "Baltimore_MD")
+glm(resolved ~ victim_age + victim_race + victim_sex, 
+    data = baltimore_df,
+    family = binomial()) %>% 
+  broom::tidy() %>% 
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>% 
+  select(term, OR, starts_with("CI")) %>% 
+  knitr::kable(digits = 3)
+```
+Now run glm for each of the cities in your dataset, and extract the adjusted odds ratio (and CI) for solving homicides comparing Black victims to white victims. Do this within a “tidy” pipeline, making use of purrr::map, list columns, and unnest as necessary to create a dataframe with estimated ORs and CIs for each city.
+
+
+
+```{r}
+models_results_df = 
+  homicide_df %>% 
+  nest(data = -city_state) %>% 
+  mutate(
+    models = map(.x = data, ~glm(resolved ~ victim_age + victim_race + victim_sex, data = .x, family = binomial())),
+    results = map(models, broom::tidy)
+  ) %>% 
+  select(city_state, results) %>% 
+  unnest(results) %>% 
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>% 
+  select(city_state, term, OR, starts_with("CI")) 
+```
+
+This plot shows that New York, NY has the lowest odds (less than 1) of solving a homicide for males compared to females will be resolved by arrest,  when adjusting race, and sex, whereas Albuquerque, NM has the highest odds of solving a homicide for males compared to females when adjusting for the same variables. However, neither of them are statistically significant since the 95% CI crosses 1.
+
+```{r}
+models_results_df %>% 
+  filter(term == "victim_sexMale") %>% 
+  mutate(city_state = fct_reorder(city_state, OR)) %>% 
+  ggplot(aes(x = city_state, y = OR)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## Problem 2
+
+Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
+
+```{r}
+baby_df = 
+  read_csv("data/birthweight.csv", na = c("", "NA", "Unknown"))
+```
+
+
+Propose a regression model for birthweight. This model may be based on a hypothesized structure for the factors that underly birthweight, on a data-driven model-building process, or a combination of the two. Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
+
+Compare your model to two others:
+
+One using length at birth and gestational age as predictors (main effects only)
+One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+
+Note that although we expect your model to be reasonable, model building itself is not a main idea of the course and we don’t necessarily expect your model to be “optimal”.
+Find some residuals
+
+```{r}
+baby_df = 
+  read_csv("./data/birthweight.csv")%>%
+  mutate(
+    babysex = case_when(
+      babysex == "1" ~ "male",
+      babysex == "2" ~ "female"),
+    smoken = case_when(
+      smoken == 0 ~ 0,
+      smoken > 0 ~ 1
+    )
+  )
+```
+Propose a regression model for birthweight: I propose that mother's prepregnancy BMI, weight gain during pregnancy, and smoking status affects birthweight. This is based off my background as an OBGYN and risk factors for low birthweight.
+
+```{r}
+model_1_fit = lm(bwt ~ ppbmi + wtgain + smoken, data = baby_df)
+
+baby_df %>% 
+  modelr::add_residuals(model_1_fit) %>% 
+  ggplot(aes(x = resid)) + 
+  geom_density()
+```
+
+
+Fit model with length at birth and gestation age model
+
+```{r}
+model_2_fit = lm(bwt ~ gaweeks + blength, data = baby_df)
+
+baby_df %>% 
+  modelr::add_residuals(model_2_fit) %>% 
+  ggplot(aes(x = resid)) + 
+  geom_density()
+```
+Fit model with head circumference, length, sex, and all interactions
+
+```{r}
+model_3_fit = lm(bwt ~ bhead * blength * babysex, data = baby_df)
+
+baby_df %>% 
+  modelr::add_residuals(model_2_fit) %>% 
+  ggplot(aes(x = resid)) + 
+  geom_density()
+```
