@@ -6,6 +6,9 @@ output: github_document
 ---
 ```{r setup, include=FALSE}
 library(tidyverse)
+library(tidyverse)
+library(modelr)
+library(mgcv)
 knitr::opts_chunk$set(
 	fig.width = 6, 
   fig.asp = .6,
@@ -33,7 +36,7 @@ homicide_df =
   mutate(
     city_state = str_c(city, state, sep = ", "),
     victim_age = as.numeric(victim_age),
-    resolved = case_when(
+    resolution = case_when(
       disposition == "Closed without arrest" ~ 0,
       disposition == "Open/No arrest"        ~ 0,
       disposition == "Closed by arrest"      ~ 1)
@@ -41,17 +44,19 @@ homicide_df =
   filter(
     victim_race %in% c("White", "Black"),
     city_state != "Tulsa, AL") %>% 
-  select(city_state, resolved, victim_age, victim_race, victim_sex)
+  select(city_state, resolution, victim_age, victim_race, victim_sex)
 ```
 
 For the city of Baltimore, MD, the adjusted odds ratio for solving homicides comparing non-white victims to white victims keeping all other variables fixed is 1.363 (95% CI 0.975-1.907) which is not statistically significant.
 
 
 ```{r}
+
 baltimore_df =
   homicide_df %>% 
-  filter(city_state == "Baltimore_MD")
-glm(resolved ~ victim_age + victim_race + victim_sex, 
+  filter(city_state == "Baltimore, MD")
+
+glm(resolution ~ victim_age + victim_race + victim_sex, 
     data = baltimore_df,
     family = binomial()) %>% 
   broom::tidy() %>% 
@@ -62,6 +67,8 @@ glm(resolved ~ victim_age + victim_race + victim_sex,
   ) %>% 
   select(term, OR, starts_with("CI")) %>% 
   knitr::kable(digits = 3)
+
+
 ```
 Now run glm for each of the cities in your dataset, and extract the adjusted odds ratio (and CI) for solving homicides comparing Black victims to white victims. Do this within a “tidy” pipeline, making use of purrr::map, list columns, and unnest as necessary to create a dataframe with estimated ORs and CIs for each city.
 
@@ -72,7 +79,7 @@ models_results_df =
   homicide_df %>% 
   nest(data = -city_state) %>% 
   mutate(
-    models = map(.x = data, ~glm(resolved ~ victim_age + victim_race + victim_sex, data = .x, family = binomial())),
+    models = map(.x = data, ~glm(resolution ~ victim_age + victim_race + victim_sex, data = .x, family = binomial())),
     results = map(models, broom::tidy)
   ) %>% 
   select(city_state, results) %>% 
@@ -128,18 +135,60 @@ baby_df =
     smoken = case_when(
       smoken == 0 ~ 0,
       smoken > 0 ~ 1
-    )
+    ),
+   id = row_number()
   )
 ```
-Propose a regression model for birthweight: I propose that mother's prepregnancy BMI, weight gain during pregnancy, and smoking status affects birthweight. This is based off my background as an OBGYN and risk factors for low birthweight.
+Propose a regression model for birthweight: 
+
+Initially, I proposed that a mother's prepregnancy GMI, weight gain during pregnancy, and smoking status would all be important variables to include into my model. However, we see that there is a left skew of the residuals, which led me to believe that there may be other variables in the dataset that are important to include in my model.
+
 
 ```{r}
-model_1_fit = lm(bwt ~ ppbmi + wtgain + smoken, data = baby_df)
+model_test = 
+  lm(bwt ~ ppbmi + wtgain + smoken, data = baby_df)
 
-baby_df %>% 
-  modelr::add_residuals(model_1_fit) %>% 
+model_test_df = 
+  baby_df %>%
+  modelr::add_residuals(model_test)
+
+model_test_plot = 
+  model_test_df %>%
   ggplot(aes(x = resid)) + 
   geom_density()
+```
+I then hypothesized that gestational age would be an important covariate, since birthweight should be directly correlated with how far along a pregnancy is before delivery. I used a residual v. predictor plot to test this hypothesis and it looked like there was a linea relationship between residuals of my initial model and predictions in a model between birthweigt and gestational age.
+
+```{r}
+
+model_ga = 
+  lm(bwt ~ gaweeks, data = baby_df)
+
+model_test_df %>%
+  modelr::add_predictions(model_ga)%>%
+  ggplot(aes(x= pred, y = resid)) +
+  geom_point()
+```
+
+
+I then proposed that mother's prepregnancy BMI, weight gain during pregnancy, smoking status AND gestational age affects birthweight. The residual plot of this model was more symmetrical around 0 (with a mild left skew).
+
+```{r}
+model_1_fit = lm(bwt ~ ppbmi + wtgain + smoken + gaweeks, data = baby_df)
+
+
+model_1_df = 
+  baby_df %>% 
+  modelr::add_residuals(model_1_fit)%>%
+  mutate(
+    model = "model_one"
+  )%>%
+  select(model, id, bwt, resid)
+
+  model_1_df %>%
+  ggplot(aes(x = resid)) + 
+  geom_density()
+
 ```
 
 
@@ -148,18 +197,78 @@ Fit model with length at birth and gestation age model
 ```{r}
 model_2_fit = lm(bwt ~ gaweeks + blength, data = baby_df)
 
-baby_df %>% 
-  modelr::add_residuals(model_2_fit) %>% 
+model_2_df =
+  baby_df %>% 
+  modelr::add_residuals(model_2_fit) %>%
+  mutate(
+    model = "model_two"
+  )%>%
+  select(model, id, bwt, resid)
+
+model_2_df %>% 
   ggplot(aes(x = resid)) + 
   geom_density()
 ```
+
 Fit model with head circumference, length, sex, and all interactions
 
 ```{r}
 model_3_fit = lm(bwt ~ bhead * blength * babysex, data = baby_df)
 
-baby_df %>% 
-  modelr::add_residuals(model_2_fit) %>% 
+model_3_df = 
+  baby_df %>% 
+  modelr::add_residuals(model_3_fit) %>%
+  mutate(
+    model = "model_three"
+  )%>%
+  select(model, id, bwt, resid)
+
+model_3_df %>% 
   ggplot(aes(x = resid)) + 
   geom_density()
 ```
+
+Now perform cross validation of the three models
+
+```{r}
+cv_df = 
+  crossv_mc(baby_df, 100) 
+
+cv_df =
+  cv_df %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df = 
+  cv_df %>% 
+  mutate(
+    model_one  = map(train, ~lm(bwt ~ ppbmi + wtgain + smoken + gaweeks, data = .x)),
+    model_two  = map(train, ~lm(bwt ~ gaweeks + blength, data = .x)),
+    model_three  = map(train, ~lm(bwt ~ bhead * blength * babysex, data = .x))) %>% 
+  mutate(
+    rmse_model_one = map2_dbl(model_one, test, ~rmse(model = .x, data = .y)),
+    rmse_model_two = map2_dbl(model_two, test, ~rmse(model = .x, data = .y)),
+    rmse_model_three = map2_dbl(model_three, test, ~rmse(model = .x, data = .y)))
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+From our plot, we see that model three (birthweight predicted by head circumference, body legnth, sex and its interactions) is the best fitted model of the three that were proposed.
+
+
+
+
+
+
+
+
+
