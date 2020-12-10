@@ -10,6 +10,7 @@ library(tidyverse)
 library(modelr)
 library(mgcv)
 library(p8105.datasets)
+library(Rmisc)
 knitr::opts_chunk$set(
 	fig.width = 6, 
   fig.asp = .6,
@@ -66,9 +67,7 @@ glm(resolution ~ victim_age + victim_race + victim_sex,
 
 
 ```
-Now run glm for each of the cities in your dataset, and extract the adjusted odds ratio (and CI) for solving homicides comparing Black victims to white victims. Do this within a “tidy” pipeline, making use of purrr::map, list columns, and unnest as necessary to create a dataframe with estimated ORs and CIs for each city.
-
-
+Now run glm for each of the cities in your dataset, and extract the adjusted odds ratio (and CI) for solving homicides comparing Black victims to white victims. 
 
 ```{r}
 models_results_df = 
@@ -105,7 +104,8 @@ models_results_df %>%
 Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
 
 ```{r}
-baby_df = 
+
+baby_df =
   read_csv("data/birthweight.csv", na = c("", "NA", "Unknown"))%>%
   mutate(
     babysex = case_when(
@@ -114,9 +114,9 @@ baby_df =
     smoken = case_when(
       smoken == 0 ~ 0,
       smoken > 0 ~ 1
-    ),
-   id = row_number()
+    )
   )
+
 ```
 Propose a regression model for birthweight: 
 
@@ -162,7 +162,7 @@ model_1_df =
   mutate(
     model = "model_one"
   )%>%
-  select(model, id, bwt, resid)
+  select(model, bwt, resid)
 
   model_1_df %>%
   ggplot(aes(x = resid)) + 
@@ -182,7 +182,7 @@ model_2_df =
   mutate(
     model = "model_two"
   )%>%
-  select(model, id, bwt, resid)
+  select(model, bwt, resid)
 
 model_2_df %>% 
   ggplot(aes(x = resid)) + 
@@ -200,7 +200,7 @@ model_3_df =
   mutate(
     model = "model_three"
   )%>%
-  select(model, id, bwt, resid)
+  select(model, bwt, resid)
 
 model_3_df %>% 
   ggplot(aes(x = resid)) + 
@@ -266,11 +266,12 @@ lm(tmax ~ tmin, data = weather_df) %>%
   knitr::kable(digits = 3)
 ```
 
-Bootstrapping
+Bootstrapping: From our density plots, we see that the r-square estimates concentrate between 0.91 and 0.92 and the log(beta_0*beta_1) concentrates between 2.00 and 2.05. The r-square value shows that our linear model provides a good fit for our dataset.
+
 ```{r}
 rsquare_df =
 weather_df %>% 
-  modelr::bootstrap(n = 1000) %>% 
+  modelr::bootstrap(n = 5000) %>% 
   mutate(
     models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
     results = map(models, broom::glance))%>%
@@ -282,7 +283,7 @@ rsquare_df %>%
 
 log_beta_df =
 weather_df %>% 
-  modelr::bootstrap(n = 1000) %>% 
+  modelr::bootstrap(n = 5000) %>% 
   mutate(
     models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
     results = map(models, broom::tidy)) %>% 
@@ -299,8 +300,21 @@ log_beta_df %>%
 
 ```
 
+Calculate 95% CI for r-square estimates: We see that the CI does not cross 0.
+
+```{r}
+CI(rsquare_df$r.squared, ci=0.95)%>% 
+  knitr::kable(digits = 3)
+```
 
 
+
+Calculate 95% CI for log(beta_0*beta_1) estimates: We see that the CI does not cross 0.
+
+```{r}
+  CI(log_beta_df$log_beta, ci=0.95)%>% 
+  knitr::kable(digits = 3)
+```
 
 
 
