@@ -9,6 +9,7 @@ library(tidyverse)
 library(tidyverse)
 library(modelr)
 library(mgcv)
+library(p8105.datasets)
 knitr::opts_chunk$set(
 	fig.width = 6, 
   fig.asp = .6,
@@ -23,11 +24,6 @@ scale_colour_discrete = scale_colour_viridis_d
 scale_fill_discrete = scale_fill_viridis_d
 ```
 ### Problem 1
-Create a city_state variable (e.g. “Baltimore, MD”), and a binary variable indicating whether the homicide is solved. Omit cities Dallas, TX; Phoenix, AZ; and Kansas City, MO – these don’t report victim race. Also omit Tulsa, AL – this is a data entry mistake. For this problem, limit your analysis those for whom victim_race is white or black. Be sure that victim_age is numeric.
-
-
-
-
 Read in the data
 
 ```{r}
@@ -110,24 +106,7 @@ Load and clean the data for regression analysis (i.e. convert numeric to factor 
 
 ```{r}
 baby_df = 
-  read_csv("data/birthweight.csv", na = c("", "NA", "Unknown"))
-```
-
-
-Propose a regression model for birthweight. This model may be based on a hypothesized structure for the factors that underly birthweight, on a data-driven model-building process, or a combination of the two. Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
-
-Compare your model to two others:
-
-One using length at birth and gestational age as predictors (main effects only)
-One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
-Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
-
-Note that although we expect your model to be reasonable, model building itself is not a main idea of the course and we don’t necessarily expect your model to be “optimal”.
-Find some residuals
-
-```{r}
-baby_df = 
-  read_csv("./data/birthweight.csv")%>%
+  read_csv("data/birthweight.csv", na = c("", "NA", "Unknown"))%>%
   mutate(
     babysex = case_when(
       babysex == "1" ~ "male",
@@ -263,6 +242,62 @@ cv_df %>%
 ```
 
 From our plot, we see that model three (birthweight predicted by head circumference, body legnth, sex and its interactions) is the best fitted model of the three that were proposed.
+
+## Problem 3
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+Create linear model
+```{r}
+lm(tmax ~ tmin, data = weather_df) %>% 
+  broom::tidy() %>% 
+  knitr::kable(digits = 3)
+```
+
+Bootstrapping
+```{r}
+rsquare_df =
+weather_df %>% 
+  modelr::bootstrap(n = 1000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::glance))%>%
+  unnest(results)
+
+rsquare_df %>% 
+  ggplot(aes(x = r.squared)) + 
+  geom_density()
+
+log_beta_df =
+weather_df %>% 
+  modelr::bootstrap(n = 1000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::tidy)) %>% 
+  group_by(.id)%>%
+  unnest(results)%>%
+  select(.id, term, estimate)%>%
+  pivot_wider (names_from = term, values_from = estimate)%>%
+  mutate(
+    log_beta = log(`(Intercept)`*tmin))
+
+log_beta_df %>% 
+  ggplot(aes(x = log_beta)) + 
+  geom_density()
+
+```
 
 
 
